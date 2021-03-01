@@ -4,7 +4,6 @@ import (
 	"image"
 	"log"
 	"os"
-	"time"
 
 	_ "image/jpeg"
 	_ "image/png"
@@ -15,18 +14,51 @@ import (
 	"github.com/pkg/errors"
 )
 
+var Greetings = []rune("Hello, world! Look at this SIXEL: ")
+
+type Image struct {
+	Path     string
+	Position image.Point
+	Size     image.Point
+}
+
+var images = []Image{{
+	Path:     "/home/diamond/Pictures/astolfo_ava_n.png",
+	Position: image.Pt(0, 1),
+	Size:     tsixel.CharPt(20, 20), // or 40x20 chars or a square
+}, {
+	Path:     "/home/diamond/Downloads/curry1.png",
+	Position: image.Pt(len(Greetings), 0),
+	Size:     tsixel.CharPt(1, 1), // 2x1 chars
+}}
+
 func main() {
-	img, err := readImage("/home/diamond/Pictures/astolfo_ava_n.png")
-	if err != nil {
-		log.Fatalln("failed to read image:", err)
+	var sixels = make([]*tsixel.Image, len(images))
+
+	for i, img := range images {
+		image, err := readImage(img.Path)
+		if err != nil {
+			log.Fatalln("failed to read image:", err)
+		}
+
+		sixel := tsixel.NewImage(image, tsixel.ImageOpts{
+			Resize:    true,
+			KeepRatio: true,
+			Dither:    false,
+			Filter:    imaging.Box,
+		})
+		sixel.SetSize(img.Size)
+		sixel.SetPosition(img.Position)
+
+		sixels[i] = sixel
 	}
 
-	if err := start(img); err != nil {
+	if err := start(sixels); err != nil {
 		log.Fatalln(err)
 	}
 }
 
-func start(img image.Image) error {
+func start(images []*tsixel.Image) error {
 	screen, err := tcell.NewScreen()
 	if err != nil {
 		return errors.Wrap(err, "failed to create screen")
@@ -42,28 +74,20 @@ func start(img image.Image) error {
 		return errors.Wrap(err, "failed to wrap screen")
 	}
 
-	sixel := sixels.AddAnyImage(img, tsixel.ImageOpts{
-		Resize:    true,
-		KeepRatio: true,
-		Dither:    false,
-		Filter:    imaging.Box,
-	})
+	for _, img := range images {
+		sixels.AddImage(img)
+	}
 
-	sixel.SetSize(tsixel.CharPt(20, 20)) // or 40x20 chars or a square
-	sixel.SetPosition(image.Pt(0, 1))
+	screen.SetCell(0, 0, tcell.StyleDefault, Greetings...)
+	screen.Show()
 
-	runes := []rune("Hello, world! Look at this SIXEL:")
-	screen.SetCell(0, 0, tcell.StyleDefault, runes...)
-
-	screen.Sync()
-
-	go func() {
-		for i := len(runes); i < len(runes)+25; i++ {
-			screen.SetCell(i, 0, tcell.StyleDefault, '.')
-			screen.Sync()
-			time.Sleep(time.Second)
-		}
-	}()
+	// 	go func() {
+	// 		for i := len(Greetings); i < len(Greetings)+25; i++ {
+	// 			screen.SetCell(i, 0, tcell.StyleDefault, '.')
+	// 			screen.Show()
+	// 			time.Sleep(time.Second)
+	// 		}
+	// 	}()
 
 	for {
 		switch ev := screen.PollEvent().(type) {

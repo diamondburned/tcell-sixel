@@ -19,7 +19,8 @@ type Image struct {
 	src       image.Image
 	bounds    image.Rectangle // requested region
 	currentSz image.Point     // current image size
-	ssize     *screenSize     // screen size
+
+	sstate *screenState // screen state
 
 	enc *sixel.Encoder
 	buf *bytes.Buffer
@@ -65,32 +66,73 @@ func NewImage(img image.Image, opts ImageOpts) *Image {
 // be larger than the screen OR the source image. The function will also not do
 // much if resizing is not enabled.
 func (img *Image) SetSize(size image.Point) {
+	if img.sstate != nil {
+		img.sstate.Lock()
+		defer img.sstate.Unlock()
+	}
+
+	img.setSize(size)
+}
+
+func (img *Image) setSize(size image.Point) {
 	img.bounds.Max = img.bounds.Min.Add(size)
 }
 
 // SetPosition sets the top-left corner of the image in units of cells.
 func (img *Image) SetPosition(pos image.Point) {
+	if img.sstate != nil {
+		img.sstate.Lock()
+		defer img.sstate.Unlock()
+	}
+
+	img.setPosition(pos)
+}
+
+func (img *Image) setPosition(pos image.Point) {
 	old := img.bounds.Min
 	img.bounds.Min = pos
 
 	// Recalculate the size for the bounds.
-	img.SetSize(img.bounds.Max.Sub(old))
+	img.setSize(img.bounds.Max.Sub(old))
 }
 
 // Bounds returns the bounds of the image relative to the top-left corner of the
 // screen in units of cells. It is capped to the dimensions of the screen and
 // may not be the actual bounds set. The function will return a zero-sized
 // rectangle if the image is not yet initialized.
-func (img Image) Bounds() image.Rectangle {
-	return img.bounds.Intersect(image.Rectangle{
-		// Min is always (0, 0).
-		Max: img.ssize.cells,
-	})
+func (img *Image) Bounds() image.Rectangle {
+	if img.sstate != nil {
+		img.sstate.Lock()
+		defer img.sstate.Unlock()
+	}
+
+	return img.imageBounds()
 }
 
 // BoundsPx returns the Bounds but in pixels instead of cells.
-func (img Image) BoundsPx() image.Rectangle {
-	return img.ssize.rectInPixels(img.Bounds())
+func (img *Image) BoundsPx() image.Rectangle {
+	if img.sstate != nil {
+		img.sstate.Lock()
+		defer img.sstate.Unlock()
+	}
+
+	return img.sstate.rectInPixels(img.imageBounds())
+}
+
+// maxBounds returns the bounds for the maximum region.
+func (img *Image) maxBounds() image.Rectangle {
+	return img.bounds.Intersect(image.Rectangle{Max: img.sstate.cells})
+}
+
+// imageBounds returns the bounds for the current image.
+func (img *Image) imageBounds() image.Rectangle {
+	bounds := img.maxBounds()
+	bounds = bounds.Intersect(image.Rectangle{
+		Min: bounds.Min,
+		Max: bounds.Min.Add(img.currentSz),
+	})
+
+	return bounds
 }
 
 // resizeImage resizes the src image and updates the internal buffer. It returns
@@ -99,21 +141,30 @@ func (img *Image) resizeImage() bool {
 	var resizedImg = img.src
 
 	if img.opts.Resize {
-		rect := img.ssize.rectInPixels(img.Bounds())
-		size := rect.Size()
-
-		if img.opts.KeepRatio {
-			size = maxSize(img.src.Bounds().Size(), size)
-		}
+		maxBounds := img.maxBounds()
 
 		// Check if we had the same size as before. Don't bother resizing if
 		// yes.
-		if size == img.currentSz {
+		// TODO: this treats the image as having the same ratio as the region
+		// set, which is incorrect!
+		if maxBounds.Size() == img.currentSz {
 			return false
 		}
 
-		resizedImg = imaging.Resize(resizedImg, size.X, size.Y, img.opts.Filter)
-		img.currentSz = resizedImg.Bounds().Size()
+		img.currentSz = maxBounds.Size()
+
+		rect := img.sstate.rectInPixels(maxBounds)
+		size := rect.Size()
+
+		if img.opts.KeepRatio {
+			if size.X > size.Y {
+				size.X = 0
+			} else {
+				size.Y = 0
+			}
+		}
+
+		resizedImg = imaging.Resize(img.src, size.X, size.Y, img.opts.Filter)
 	}
 
 	// TODO: optimize for when we draw outside the screen.
@@ -132,10 +183,10 @@ func maxSize(size, max image.Point) image.Point {
 	}
 
 	if size.X > size.Y {
-		size.Y = size.Y * max.X / size.X
+		size.Y = size.Y * (max.X / size.X)
 		size.X = max.X
 	} else {
-		size.X = size.X * max.Y / size.Y
+		size.X = size.X * (max.Y / size.Y)
 		size.Y = max.Y
 	}
 
