@@ -4,15 +4,17 @@ import (
 	"image"
 	"log"
 	"os"
+	"path/filepath"
 	"time"
 
+	"image/gif"
 	_ "image/jpeg"
 	_ "image/png"
 
 	"github.com/diamondburned/tcell-sixel/tsixel"
-	"github.com/disintegration/imaging"
 	"github.com/gdamore/tcell/v2"
 	"github.com/pkg/errors"
+	"golang.org/x/image/draw"
 )
 
 var Greetings = []rune("Hello, world! Look at this SIXEL: ")
@@ -31,25 +33,54 @@ var images = []Image{{
 	Path:     "/home/diamond/Downloads/curry1.png",
 	Position: image.Pt(len(Greetings), 0),
 	Size:     tsixel.CharPt(1, 1), // 2x1 chars
+}, {
+	Path:     "/home/diamond/Downloads/emoji.gif",
+	Position: tsixel.CharPt(20, 1),
+	Size:     tsixel.CharPt(5, 5),
 }}
 
 func main() {
-	var sixels = make([]*tsixel.Image, len(images))
+	sixels := make([]tsixel.Imager, len(images))
+	opts := tsixel.ImageOpts{
+		KeepRatio: true,
+		Dither:    false,
+		Scaler:    draw.ApproxBiLinear,
+	}
 
 	for i, img := range images {
-		image, err := readImage(img.Path)
+		var sixel tsixel.Imager
+
+		f, err := os.Open(img.Path)
 		if err != nil {
-			log.Fatalln("failed to read image:", err)
+			log.Fatalln("failed to open:", err)
 		}
 
-		sixel := tsixel.NewImage(image, tsixel.ImageOpts{
-			KeepRatio: true,
-			Dither:    false,
-			Filter:    imaging.Box,
-		})
-		sixel.SetSize(img.Size)
-		sixel.SetPosition(img.Position)
+		if filepath.Ext(img.Path) == ".gif" {
+			g, err := gif.DecodeAll(f)
+			if err != nil {
+				log.Fatalln("failed to decode GIF:", err)
+			}
 
+			anim := tsixel.NewAnimation(g, opts)
+			anim.SetSize(img.Size)
+			anim.SetPosition(img.Position)
+
+			sixel = anim
+
+		} else {
+			src, _, err := image.Decode(f)
+			if err != nil {
+				log.Fatalln("failde to decode image:", err)
+			}
+
+			siximg := tsixel.NewImage(src, opts)
+			siximg.SetSize(img.Size)
+			siximg.SetPosition(img.Position)
+
+			sixel = siximg
+		}
+
+		f.Close()
 		sixels[i] = sixel
 	}
 
@@ -58,7 +89,7 @@ func main() {
 	}
 }
 
-func start(images []*tsixel.Image) error {
+func start(images []tsixel.Imager) error {
 	screen, err := tcell.NewScreen()
 	if err != nil {
 		return errors.Wrap(err, "failed to create screen")
@@ -82,7 +113,7 @@ func start(images []*tsixel.Image) error {
 	screen.Sync()
 
 	go func() {
-		for range time.Tick(time.Second) {
+		for range time.Tick(time.Second / 15) {
 			screen.Show()
 		}
 	}()
@@ -96,19 +127,4 @@ func start(images []*tsixel.Image) error {
 			}
 		}
 	}
-}
-
-func readImage(src string) (image.Image, error) {
-	f, err := os.Open(src)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to open file")
-	}
-	defer f.Close()
-
-	img, _, err := image.Decode(f)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to decode image")
-	}
-
-	return img, nil
 }

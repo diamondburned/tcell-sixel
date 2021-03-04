@@ -12,4 +12,5 @@ require (
 	github.com/mattn/go-sixel v0.0.1
 	github.com/pkg/errors v0.9.1
 	github.com/soniakeys/quant v1.0.0 // indirect
+	golang.org/x/image v0.0.0-20210220032944-ac19c3e999fb // indirect
 )
