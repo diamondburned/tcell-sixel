@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"image"
 	"image/gif"
-	"log"
 	"time"
 
 	"github.com/mattn/go-sixel"
@@ -90,8 +89,6 @@ func (anim *Animation) seekFrames(now time.Time) {
 
 	// Update the current state.
 	anim.lastTime = now
-
-	log.Println("frame", anim.frameIx)
 }
 
 // gifDelayDuration converts delay in the unit of 100ths of a second to a
