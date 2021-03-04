@@ -55,10 +55,9 @@ func (anim *Animation) seekFrames(now time.Time) {
 		return
 	}
 
-	last := anim.lastTime
 	// If this is the first time we're drawing the GIF, then we draw at frame 0.
-	if last.IsZero() {
-		last = now
+	if anim.lastTime.IsZero() {
+		anim.lastTime = now
 	}
 
 	// TODO: optimize this to be in constant time rather than linear.
@@ -66,7 +65,12 @@ func (anim *Animation) seekFrames(now time.Time) {
 		delay := anim.gif.Delay[anim.frameIx] // 100ths of a second
 
 		// Accumulate the delay and the index.
-		last = last.Add(gifDelayDuration(delay))
+		next := anim.lastTime.Add(gifDelayDuration(delay))
+		// Stop accumulating once we've added enough.
+		if next.After(now) {
+			break
+		}
+
 		anim.frameIx++
 
 		// Check if the frame index is out. If it is, reset it.
@@ -81,14 +85,8 @@ func (anim *Animation) seekFrames(now time.Time) {
 			}
 		}
 
-		// Stop accumulating once we've added enough.
-		if last.After(now) {
-			break
-		}
+		anim.lastTime = next
 	}
-
-	// Update the current state.
-	anim.lastTime = now
 }
 
 // gifDelayDuration converts delay in the unit of 100ths of a second to a
