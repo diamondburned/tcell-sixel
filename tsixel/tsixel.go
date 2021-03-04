@@ -40,14 +40,33 @@ var (
 // Screen wraps around a tcell screen to manage and draw visible SIXEL images.
 type Screen struct {
 	s tcell.Screen
+	l sync.Locker
 
-	sstate screenState
-	images map[image.Image]*drawnImage
+	sstate ScreenState
+	images map[Imager]*drawnImage
+}
+
+// Imager represents an image interface.
+type Imager interface {
+	// UpdateSize updates the image's sizes. After this method is called, the
+	// image must be synchronized using the given state.
+	Update(state ScreenState, sync bool, now time.Time) ImageState
+}
+
+// ImageState is a representation of the image state after an update.
+type ImageState struct {
+	// Buonds is the current image size and position on the screen in units of
+	// cells.
+	Bounds image.Rectangle
+	// SIXEL is the byte slice to the raw SIXEL data of the image. The slice
+	// must only be changed when Update is called.
+	SIXEL []byte
 }
 
 // drawnImage is a stateful image wrapper for damage tracking.
 type drawnImage struct {
-	*Image
+	Imager
+	state  ImageState
 	redraw bool
 }
 
@@ -75,8 +94,7 @@ func WrapInitScreen(s tcell.Screen) (*Screen, error) {
 		return nil, ErrNoPixelDimensions
 	}
 
-	sstate := screenState{
-		Locker: locker,
+	sstate := ScreenState{
 		cells:  image.Pt(s.Size()),
 		pixels: image.Pt(pxsz.PixelSize()),
 	}
@@ -88,8 +106,9 @@ func WrapInitScreen(s tcell.Screen) (*Screen, error) {
 
 	screen := Screen{
 		s:      s,
+		l:      locker,
 		sstate: sstate,
-		images: map[image.Image]*drawnImage{},
+		images: map[Imager]*drawnImage{},
 	}
 
 	iceptAdder.AddDrawIntercept(screen.beforeDraw)
@@ -99,6 +118,8 @@ func WrapInitScreen(s tcell.Screen) (*Screen, error) {
 
 // beforeDraw is responsible for damage tracking.
 func (s *Screen) beforeDraw(screen tcell.Screen, sync bool) {
+	now := time.Now()
+
 	// Assume sstate's locker is acquired by the caller.
 
 	// Update the screen size, always.
@@ -107,29 +128,28 @@ func (s *Screen) beforeDraw(screen tcell.Screen, sync bool) {
 	viewer, hasCellBuffer := screen.(tcell.CellBufferViewer)
 
 	for _, img := range s.images {
-		// Always redraw if we're syncing.
+		// TODO: resize before locking to reduce contention. This doesn't really
+		// matter.
+		state := img.Update(s.sstate, sync, now)
+		// Redraw if the bounds are different.
+		img.redraw = !state.Bounds.Eq(img.state.Bounds)
+		// Update the state.
+		img.state = state
+
 		if sync {
 			img.redraw = true
 			continue
 		}
 
-		// TODO: resize before locking to reduce contention. This doesn't really
-		// matter.
-		redraw := img.resizeImage()
-
 		// We only check if we need to redraw if we haven't resized. We ALWAYS
 		// have to redraw if the image has been resized.
-		if !redraw && hasCellBuffer {
+		if !img.redraw && hasCellBuffer {
+			r := img.state.Bounds
+
 			viewer.ViewCellBuffer(func(cb *tcell.CellBuffer) {
-				imgRect := img.imageBounds()
-				redraw = cb.DirtyRegion(
-					imgRect.Min.X, imgRect.Min.Y,
-					imgRect.Max.X, imgRect.Max.Y,
-				)
+				img.redraw = cb.DirtyRegion(r.Min.X, r.Min.Y, r.Max.X, r.Max.Y)
 			})
 		}
-
-		img.redraw = redraw
 	}
 }
 
@@ -139,8 +159,8 @@ func (s *Screen) afterDraw(screen tcell.Screen, sync bool) {
 
 	for _, img := range s.images {
 		if img.redraw {
-			screen.ShowCursor(img.bounds.Min.X, img.bounds.Min.Y)
-			drawer.DrawDirectly(img.buf.Bytes())
+			screen.ShowCursor(img.state.Bounds.Min.X, img.state.Bounds.Min.Y)
+			drawer.DrawDirectly(img.state.SIXEL)
 		}
 	}
 
@@ -150,12 +170,12 @@ func (s *Screen) afterDraw(screen tcell.Screen, sync bool) {
 
 // AddImage adds a SIXEL image onto the screen. This method will not redraw, so
 // the caller should call Sync on the screen.
-func (s *Screen) AddImage(img *Image) {
-	s.sstate.Lock()
-	defer s.sstate.Unlock()
+func (s *Screen) AddImage(img Imager) {
+	s.l.Lock()
+	defer s.l.Unlock()
 
-	img.sstate = &s.sstate
-	s.images[img.src] = &drawnImage{Image: img}
+	img.Update(s.sstate, false, time.Now())
+	s.images[img] = &drawnImage{Imager: img}
 }
 
 // AddAnyImage adds any image type onto the screen. It is a convenient wrapper
@@ -167,39 +187,37 @@ func (s *Screen) AddAnyImage(img image.Image, opts ImageOpts) *Image {
 }
 
 // RemoveImage removes an image from the screen. It does not redraw.
-func (s *Screen) RemoveImage(img *Image) {
-	s.sstate.Lock()
-	defer s.sstate.Unlock()
+func (s *Screen) RemoveImage(img Imager) {
+	s.l.Lock()
+	defer s.l.Unlock()
 
-	delete(s.images, img.src)
+	delete(s.images, img)
 }
 
-// screenState stores the screen size in two units: cells and pixels.
-type screenState struct {
-	sync.Locker
-
+// ScreenState stores the screen size in two units: cells and pixels.
+type ScreenState struct {
 	cells  image.Point
 	pixels image.Point
 }
 
-func (sz *screenState) update(screen tcell.Screen) {
+func (sz *ScreenState) update(screen tcell.Screen) {
 	sz.cells.X, sz.cells.Y = screen.Size()
 
 	pxsz, _ := screen.(tcell.PixelSizer)
 	sz.pixels.X, sz.pixels.Y = pxsz.PixelSize()
 }
 
-// cellSize returns the size of each cell in pixels.
-func (sz screenState) cellSize() image.Point {
+// CellSize returns the size of each cell in pixels.
+func (sz ScreenState) CellSize() image.Point {
 	return image.Point{
 		X: sz.pixels.X / sz.cells.X,
 		Y: sz.pixels.Y / sz.cells.Y,
 	}
 }
 
-// ptInPixels converts a point which unit is in cells to pixels.
-func (sz screenState) ptInPixels(pt image.Point) image.Point {
-	cell := sz.cellSize()
+// PtInPixels converts a point which unit is in cells to pixels.
+func (sz ScreenState) PtInPixels(pt image.Point) image.Point {
+	cell := sz.CellSize()
 
 	pt.X *= cell.X
 	pt.Y *= cell.Y
@@ -207,19 +225,23 @@ func (sz screenState) ptInPixels(pt image.Point) image.Point {
 	return pt
 }
 
+// SIXELHeight is the height of a single SIXEL strip.
+//
 // According to Wikipedia, the free encyclopedia:
 //
 //    Sixel encodes images by breaking up the bitmap into a series of 6-pixel
 //    high horizontal strips.
 //
-// Therefore, we can assert that we should account for a 3 or 6 pixels
-// difference.
+// This suggests that a SIXEL image's height can only be in multiples of 6. We
+// must account this fact into consideration when resizing an image to not
+// overflow a line when a cell's height is not in multiples of 6.
 const SIXELHeight = 6 // px
 
-// rectInPixels converts a rectangle which unit is in cells into one in pixels.
-// It accounts for the cell margins.
-func (sz screenState) rectInPixels(rect image.Rectangle) image.Rectangle {
-	cell := sz.cellSize()
+// RectInPixels converts a rectangle which unit is in cells into one in pixels.
+// It accounts for the cell margins. The returned rectangle is guaranteed to
+// have roughly the same aspect ratio.
+func (sz ScreenState) RectInPixels(rect image.Rectangle) image.Rectangle {
+	cell := sz.CellSize()
 
 	rect.Min.X = rect.Min.X * cell.X
 	rect.Min.Y = rect.Min.Y * cell.Y
@@ -228,7 +250,11 @@ func (sz screenState) rectInPixels(rect image.Rectangle) image.Rectangle {
 	rect.Max.Y = rect.Max.Y * cell.Y
 
 	// Round the image down to the proper SIXEL sizes.
-	rect.Max.Y -= rect.Max.Y % SIXELHeight
+	excess := rect.Max.Y % SIXELHeight
+	rect.Max.Y -= excess
+
+	// Account for this loss in the width.
+	rect.Max.X -= (excess * cell.X) / cell.Y
 
 	return rect
 }

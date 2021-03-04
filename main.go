@@ -4,6 +4,7 @@ import (
 	"image"
 	"log"
 	"os"
+	"time"
 
 	_ "image/jpeg"
 	_ "image/png"
@@ -42,7 +43,6 @@ func main() {
 		}
 
 		sixel := tsixel.NewImage(image, tsixel.ImageOpts{
-			Resize:    true,
 			KeepRatio: true,
 			Dither:    false,
 			Filter:    imaging.Box,
@@ -79,15 +79,13 @@ func start(images []*tsixel.Image) error {
 	}
 
 	screen.SetCell(0, 0, tcell.StyleDefault, Greetings...)
-	screen.Show()
+	screen.Sync()
 
-	// 	go func() {
-	// 		for i := len(Greetings); i < len(Greetings)+25; i++ {
-	// 			screen.SetCell(i, 0, tcell.StyleDefault, '.')
-	// 			screen.Show()
-	// 			time.Sleep(time.Second)
-	// 		}
-	// 	}()
+	go func() {
+		for range time.Tick(time.Second) {
+			screen.Show()
+		}
+	}()
 
 	for {
 		switch ev := screen.PollEvent().(type) {

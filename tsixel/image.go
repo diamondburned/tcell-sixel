@@ -3,6 +3,8 @@ package tsixel
 import (
 	"bytes"
 	"image"
+	"sync"
+	"time"
 
 	"github.com/disintegration/imaging"
 	"github.com/mattn/go-sixel"
@@ -14,13 +16,16 @@ import (
 // don't update the screen; the caller must manually synchronize it.
 //
 // An image is not thread-safe, so it is not safe to share it across multiple
-// screens, even with the same dimensions.
+// screens, even with the same dimensions. This is because the synchronization
+// of an image entirely depends on the screen it is on.
 type Image struct {
+	l sync.Mutex
+
 	src       image.Image
 	bounds    image.Rectangle // requested region
 	currentSz image.Point     // current image size
 
-	sstate *screenState // screen state
+	sstate ScreenState // screen state
 
 	enc *sixel.Encoder
 	buf *bytes.Buffer
@@ -31,9 +36,6 @@ type Image struct {
 // ImageOpts represents the options of a SIXEL image. It is meant to be constant
 // to each image.
 type ImageOpts struct {
-	// Resize, if true, will enable resizing for the image if it ever goes over
-	// the size set or the screen.
-	Resize bool
 	// KeepRatio, if true, will maintain the aspect ratio of the image when it's
 	// scaled down to fit the size. The image will be anchored on the top left.
 	KeepRatio bool
@@ -66,10 +68,8 @@ func NewImage(img image.Image, opts ImageOpts) *Image {
 // be larger than the screen OR the source image. The function will also not do
 // much if resizing is not enabled.
 func (img *Image) SetSize(size image.Point) {
-	if img.sstate != nil {
-		img.sstate.Lock()
-		defer img.sstate.Unlock()
-	}
+	img.l.Lock()
+	defer img.l.Unlock()
 
 	img.setSize(size)
 }
@@ -80,10 +80,8 @@ func (img *Image) setSize(size image.Point) {
 
 // SetPosition sets the top-left corner of the image in units of cells.
 func (img *Image) SetPosition(pos image.Point) {
-	if img.sstate != nil {
-		img.sstate.Lock()
-		defer img.sstate.Unlock()
-	}
+	img.l.Lock()
+	defer img.l.Unlock()
 
 	img.setPosition(pos)
 }
@@ -101,22 +99,18 @@ func (img *Image) setPosition(pos image.Point) {
 // may not be the actual bounds set. The function will return a zero-sized
 // rectangle if the image is not yet initialized.
 func (img *Image) Bounds() image.Rectangle {
-	if img.sstate != nil {
-		img.sstate.Lock()
-		defer img.sstate.Unlock()
-	}
+	img.l.Lock()
+	defer img.l.Unlock()
 
 	return img.imageBounds()
 }
 
 // BoundsPx returns the Bounds but in pixels instead of cells.
 func (img *Image) BoundsPx() image.Rectangle {
-	if img.sstate != nil {
-		img.sstate.Lock()
-		defer img.sstate.Unlock()
-	}
+	img.l.Lock()
+	defer img.l.Unlock()
 
-	return img.sstate.rectInPixels(img.imageBounds())
+	return img.sstate.RectInPixels(img.imageBounds())
 }
 
 // maxBounds returns the bounds for the maximum region.
@@ -135,44 +129,48 @@ func (img *Image) imageBounds() image.Rectangle {
 	return bounds
 }
 
-// resizeImage resizes the src image and updates the internal buffer. It returns
-// false if the buffer is not updated.
-func (img *Image) resizeImage() bool {
-	var resizedImg = img.src
+// Update updates the image's state to the given screen, resizes the src image,
+// and updates the internal buffer. It implements the Imager interface.
+func (img *Image) Update(state ScreenState, sync bool, now time.Time) ImageState {
+	img.sstate = state
 
-	if img.opts.Resize {
-		maxBounds := img.maxBounds()
+	maxBounds := img.maxBounds()
 
-		// Check if we had the same size as before. Don't bother resizing if
-		// yes.
-		// TODO: this treats the image as having the same ratio as the region
-		// set, which is incorrect!
-		if maxBounds.Size() == img.currentSz {
-			return false
+	// Check if we had the same size as before. Don't bother resizing if
+	// yes.
+	// TODO: this treats the image as having the same ratio as the region
+	// set, which is incorrect!
+	if !sync && maxBounds.Size() == img.currentSz {
+		return ImageState{
+			Bounds: img.imageBounds(),
+			SIXEL:  img.buf.Bytes(),
 		}
-
-		img.currentSz = maxBounds.Size()
-
-		rect := img.sstate.rectInPixels(maxBounds)
-		size := rect.Size()
-
-		if img.opts.KeepRatio {
-			if size.X > size.Y {
-				size.X = 0
-			} else {
-				size.Y = 0
-			}
-		}
-
-		resizedImg = imaging.Resize(img.src, size.X, size.Y, img.opts.Filter)
 	}
 
-	// TODO: optimize for when we draw outside the screen.
+	img.currentSz = maxBounds.Size()
+
+	rect := img.sstate.RectInPixels(maxBounds)
+	size := rect.Size()
+
+	if img.opts.KeepRatio {
+		if size.X > size.Y {
+			size.X = 0
+		} else {
+			size.Y = 0
+		}
+	}
+
+	resizedImg := imaging.Resize(img.src, size.X, size.Y, img.opts.Filter)
 
 	img.buf.Reset()
 	img.enc.Encode(resizedImg)
 
-	return true
+	// TODO: optimize for when we draw outside the screen.
+
+	return ImageState{
+		Bounds: img.imageBounds(),
+		SIXEL:  img.buf.Bytes(),
+	}
 }
 
 // maxSize returns the maximum size that can fit within the given max width and
