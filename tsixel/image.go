@@ -3,6 +3,7 @@ package tsixel
 import (
 	"bytes"
 	"image"
+	"log"
 	"sync"
 	"time"
 
@@ -13,34 +14,37 @@ import (
 // ImageOpts represents the options of a SIXEL image. It is meant to be constant
 // to each image.
 type ImageOpts struct {
+	// Scaler determines the scaler to use when scaling. The default is
+	// ApproxBiLinear, which is rough but fast. Most of the time, BiLinear
+	// should be used.
+	Scaler draw.Scaler
 	// KeepRatio, if true, will maintain the aspect ratio of the image when it's
 	// scaled down to fit the size. The image will be anchored on the top left.
 	KeepRatio bool
 	// Dither, if true, will apply dithering onto the image.
 	Dither bool
-	// Scaler determines the scaler to use when scaling. The default is
-	// ApproxBiLinear, which is rough but fast. Most of the time, BiLinear
-	// should be used.
-	Scaler draw.Scaler
 }
 
 // imageState is a container for common image properties and synchronizations.
 type imageState struct {
-	l sync.Mutex
+	opts ImageOpts
+	l    sync.Mutex
 
-	srcBounds image.Rectangle
-	bounds    image.Rectangle // requested region
-	currentSz image.Point     // current image size
+	bounds  image.Rectangle // requested region
+	srcSize image.Point     // source image size in pixels
+
+	// current image sizes. Pixels are most accurate, and cells are only
+	// converted in the last stage.
+	imgCells  image.Point
+	imgPixels image.Point
 
 	sstate ScreenState // screen state
-
-	opts ImageOpts
 }
 
-func newImageState(bounds image.Rectangle, opts ImageOpts) imageState {
+func newImageState(srcSize image.Point, opts ImageOpts) imageState {
 	return imageState{
-		srcBounds: bounds,
-		opts:      opts,
+		srcSize: srcSize,
+		opts:    opts,
 	}
 }
 
@@ -96,48 +100,51 @@ func (img *imageState) BoundsPx() image.Rectangle {
 
 // maxBounds returns the bounds for the maximum region.
 func (img *imageState) maxBounds() image.Rectangle {
-	return img.bounds.Intersect(image.Rectangle{Max: img.sstate.Cells})
+	// Don't draw the image touching the screen border to prevent weird
+	// wrapping.
+	return img.bounds.Intersect(image.Rectangle{
+		Max: img.sstate.Cells.Sub(image.Pt(4, 2)),
+	})
 }
 
 // imageBounds returns the bounds for the current image.
 func (img *imageState) imageBounds() image.Rectangle {
-	bounds := img.maxBounds()
-	bounds = bounds.Intersect(image.Rectangle{
-		Min: bounds.Min,
-		Max: bounds.Min.Add(img.currentSz),
-	})
-
-	return bounds
+	return image.Rectangle{
+		Min: img.bounds.Min,
+		Max: img.bounds.Min.Add(img.imgCells),
+	}
 }
 
 // updateSize updates the internal size. An empty rectangle is returned if the
 // size is unchanged.
-func (img *imageState) updateSize(state ScreenState, sync bool) (image.Rectangle, bool) {
+func (img *imageState) updateSize(state ScreenState, sync bool) (redraw bool) {
 	img.sstate = state
 
 	// Recalculate the new image size in cells.
-	imgSize := img.maxBounds().Size()
+	newImgRect := img.maxBounds()
+	// Convert cells into pixels so we have more accuracy.
+	newImgRtPx := state.RectInPixels(newImgRect)
+
+	log.Println("newImgRect:", newImgRect)
+	log.Println("newImgRtPx:", newImgRtPx)
 
 	if img.opts.KeepRatio {
-		// This does not translate over as they're in different units, but the
-		// lowest common denominator is what we're using, so it's fine.
-		sizeCs := state.RectInCells(img.srcBounds)
-		imgSize = maxSize(sizeCs.Size(), imgSize)
+		newImgRtPx.Max = newImgRtPx.Min.Add(maxSize(img.srcSize, newImgRtPx.Size()))
+		newImgRect = state.RectInCells(newImgRtPx)
 	}
 
-	// Check if we had the same size as before. Don't bother resizing if
-	// yes.
-	// TODO: this treats the image as having the same ratio as the region
-	// set, which is incorrect!
-	if !sync && imgSize == img.currentSz {
-		return img.imageBounds(), false
+	// Check if we had the same size as before. Since we try to keep the aspect
+	// ratio, we could check if both points have a common equal size. Don't
+	// bother resizing if yes.
+	if !sync && ptOverlapOneSide(newImgRtPx.Size(), img.imgPixels) {
+		return false
 	}
 
 	// Update the image size.
-	img.currentSz = imgSize
-	imgBounds := img.imageBounds()
+	img.imgCells = newImgRect.Size()
+	img.imgPixels = newImgRtPx.Size()
 
-	return imgBounds, true
+	return true
 }
 
 // Image represents a SIXEL image. This image holds the source image and resizes
@@ -149,12 +156,12 @@ func (img *imageState) updateSize(state ScreenState, sync bool) (image.Rectangle
 // screens, even with the same dimensions. This is because the synchronization
 // of an image entirely depends on the screen it is on.
 type Image struct {
-	imageState
-	currentSize image.Point
-
 	src image.Image
 	enc *sixel.Encoder
 	buf *bytes.Buffer
+
+	imageState
+	currentSize image.Point
 }
 
 // NewImage creates a new SIXEL image from the given image.
@@ -170,7 +177,7 @@ func NewImage(img image.Image, opts ImageOpts) *Image {
 		enc: enc,
 		buf: &buf,
 
-		imageState: newImageState(img.Bounds(), opts),
+		imageState: newImageState(img.Bounds().Size(), opts),
 	}
 }
 
@@ -180,28 +187,43 @@ func (img *Image) Update(state ScreenState, sync bool, now time.Time) Frame {
 	img.l.Lock()
 	defer img.l.Unlock()
 
-	rect, redraw := img.updateSize(state, sync)
-	if !redraw {
+	if !img.updateSize(state, sync) {
 		return Frame{
 			Bounds: img.imageBounds(),
 			SIXEL:  img.buf.Bytes(),
 		}
 	}
 
-	rectPx := img.sstate.RectInPixels(rect)
-	sizePx := rectPx.Size()
-
-	resizedRect := image.Rectangle{Max: sizePx}
+	resizedRect := image.Rectangle{Max: img.imgPixels}
 
 	resizedImg := image.NewRGBA(resizedRect)
-	img.opts.Scaler.Scale(resizedImg, resizedRect, img.src, img.srcBounds, draw.Over, nil)
+	img.opts.Scaler.Scale(resizedImg, resizedRect, img.src, img.src.Bounds(), draw.Over, nil)
 
 	img.buf.Reset()
 	img.enc.Encode(resizedImg)
 
 	return Frame{
-		Bounds:     rect,
+		Bounds:     img.imageBounds(),
 		SIXEL:      img.buf.Bytes(),
 		MustUpdate: true,
 	}
+}
+
+// ptOverlapOneSide returns true if one side of p1 equals to p2.
+func ptOverlapOneSide(p1, p2 image.Point) bool {
+	return p1.X == p2.X || p1.Y == p2.Y
+}
+
+// maxSize returns the maximum size that can fit within the given max width and
+// height. Aspect ratio is preserved.
+func maxSize(size, max image.Point) image.Point {
+	if size.X < size.Y {
+		size.Y = ((size.Y * max.X) + size.X - 1) / size.X // round up
+		size.X = max.X
+	} else {
+		size.X = ((size.X * max.Y) + size.Y - 1) / size.Y
+		size.Y = max.Y
+	}
+
+	return size
 }

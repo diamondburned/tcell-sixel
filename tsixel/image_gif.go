@@ -11,27 +11,25 @@ import (
 )
 
 type Animation struct {
-	imageState
-
 	gif *gif.GIF
 	enc *sixel.Encoder
 	buf *bytes.Buffer
 
-	frames []animationFrame
-
-	frameIx  int       // frame index
-	loopedN  int       // number of times looped
+	frames   []animationFrame
 	lastTime time.Time // last drawn time
+
+	imageState
+
+	frameIx int // frame index
+	loopedN int // number of times looped
 }
 
 type animationFrame struct {
-	size  image.Point
 	sixel []byte
+	size  image.Point
 }
 
 func NewAnimation(gif *gif.GIF, opts ImageOpts) *Animation {
-	r := image.Rect(0, 0, gif.Config.Width, gif.Config.Height)
-
 	buf := bytes.Buffer{}
 	buf.Grow(SIXELBufferSize)
 
@@ -44,7 +42,7 @@ func NewAnimation(gif *gif.GIF, opts ImageOpts) *Animation {
 		buf: &buf,
 
 		frames:     make([]animationFrame, len(gif.Image)),
-		imageState: newImageState(r, opts),
+		imageState: newImageState(image.Pt(gif.Config.Width, gif.Config.Height), opts),
 	}
 }
 
@@ -102,8 +100,9 @@ func (anim *Animation) Update(state ScreenState, sync bool, now time.Time) Frame
 	lastFrame := anim.frameIx
 	anim.seekFrames(now)
 
-	rect, _ := anim.updateSize(state, sync)
+	anim.updateSize(state, sync)
 
+	rect := anim.imageBounds()
 	rectPx := anim.sstate.RectInPixels(rect)
 	sizePx := rectPx.Size()
 

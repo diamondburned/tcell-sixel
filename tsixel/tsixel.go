@@ -42,8 +42,8 @@ type Screen struct {
 	s tcell.Screen
 	l sync.Locker
 
-	sstate ScreenState
 	images map[Imager]*drawnImage
+	sstate ScreenState
 }
 
 // Imager represents an image interface.
@@ -56,12 +56,12 @@ type Imager interface {
 
 // Frame is a representation of the image frame after an update.
 type Frame struct {
-	// Buonds is the current image size and position on the screen in units of
-	// cells.
-	Bounds image.Rectangle
 	// SIXEL is the byte slice to the raw SIXEL data of the image. The slice
 	// must only be changed when Update is called.
 	SIXEL []byte
+	// Bounds is the current image size and position on the screen in units of
+	// cells.
+	Bounds image.Rectangle
 	// MustUpdate, if true, will force the screen to redraw the SIXEL. The
 	// screen may still redraw the SIXEL if this is false.
 	MustUpdate bool
@@ -214,16 +214,6 @@ func (sz ScreenState) CellSize() image.Point {
 	}
 }
 
-// PtInPixels converts a point which unit is in cells to pixels.
-func (sz ScreenState) PtInPixels(pt image.Point) image.Point {
-	cell := sz.CellSize()
-
-	pt.X *= cell.X
-	pt.Y *= cell.Y
-
-	return pt
-}
-
 // SIXELHeight is the height of a single SIXEL strip.
 //
 // According to Wikipedia, the free encyclopedia:
@@ -236,36 +226,46 @@ func (sz ScreenState) PtInPixels(pt image.Point) image.Point {
 // overflow a line when a cell's height is not in multiples of 6.
 const SIXELHeight = 6 // px
 
+// PtInPixels converts a point which unit is in cells to pixels.
+func (sz ScreenState) PtInPixels(pt image.Point) image.Point {
+	cell := sz.CellSize()
+
+	pt.X *= cell.X
+	pt.Y *= cell.Y
+
+	return pt
+}
+
+// PtInPixelsRounded converts a point which unit is in cells to pixels and
+// rounds it to be within the SIXEL multiples.
+func (sz ScreenState) PtInPixelsRounded(pt image.Point) image.Point {
+	cell := sz.CellSize()
+
+	pt.X *= cell.X
+	pt.Y *= cell.Y
+
+	// Round the image down to the proper SIXEL sizes.
+	excess := pt.Y % SIXELHeight
+	pt.Y -= excess
+
+	// Account for this loss in the width.
+	pt.X -= (excess * cell.X) / cell.Y
+
+	return pt
+}
+
 // RectInPixels converts a rectangle which unit is in cells into one in pixels.
 // It accounts for the cell margins. The returned rectangle is guaranteed to
 // have roughly the same aspect ratio.
 func (sz ScreenState) RectInPixels(rect image.Rectangle) image.Rectangle {
-	cell := sz.CellSize()
-
-	rect.Min.X = rect.Min.X * cell.X
-	rect.Min.Y = rect.Min.Y * cell.Y
-
-	rect.Max.X = rect.Max.X * cell.X
-	rect.Max.Y = rect.Max.Y * cell.Y
-
-	// Round the image down to the proper SIXEL sizes.
-	excess := rect.Max.Y % SIXELHeight
-	rect.Max.Y -= excess
-
-	// Account for this loss in the width.
-	rect.Max.X -= (excess * cell.X) / cell.Y
-
+	rect.Min = sz.PtInPixels(rect.Min)
+	rect.Max = sz.PtInPixelsRounded(rect.Max)
 	return rect
 }
 
 // RectInCells converts a rectangle which unit is in pixels into one in cells.
 func (sz ScreenState) RectInCells(rect image.Rectangle) image.Rectangle {
-	excess := rect.Max.Y % SIXELHeight
-	rect.Max.Y -= excess
-
 	cell := sz.CellSize()
-
-	rect.Max.X -= (excess * cell.X) / cell.Y
 
 	rect.Min.X /= cell.X
 	rect.Min.Y /= cell.Y
@@ -274,28 +274,4 @@ func (sz ScreenState) RectInCells(rect image.Rectangle) image.Rectangle {
 	rect.Max.Y /= cell.Y
 
 	return rect
-}
-
-// RoundRect rounds up the given rectangle in pixels to be uniform with the cell
-// dimensions.
-func (sz ScreenState) RoundRect(rect image.Rectangle) image.Rectangle {
-	return sz.RectInPixels(sz.RectInCells(rect))
-}
-
-// maxSize returns the maximum size that can fit within the given max width and
-// height. Aspect ratio is preserved.
-func maxSize(size, max image.Point) image.Point {
-	if size.X < max.X && size.Y < max.Y {
-		return size
-	}
-
-	if size.X > size.Y {
-		size.Y = ((size.Y * max.X) + size.X - 1) / size.X // round up
-		size.X = max.X
-	} else {
-		size.X = ((size.X * max.Y) + size.Y - 1) / size.Y
-		size.Y = max.Y
-	}
-
-	return size
 }

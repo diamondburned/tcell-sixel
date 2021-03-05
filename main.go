@@ -25,26 +25,30 @@ type Image struct {
 	Size     image.Point
 }
 
-var images = []Image{{
-	Path:     "/home/diamond/Pictures/astolfo_ava_n.png",
-	Position: image.Pt(0, 1),
-	Size:     tsixel.CharPt(20, 20), // or 40x20 chars or a square
-}, {
-	Path:     "/home/diamond/Downloads/curry1.png",
-	Position: image.Pt(len(Greetings), 0),
-	Size:     tsixel.CharPt(1, 1), // 2x1 chars
-}, {
-	Path:     "/home/diamond/Downloads/emoji.gif",
-	Position: tsixel.CharPt(20, 1),
-	Size:     tsixel.CharPt(5, 5),
-}}
+var images = []Image{
+	{
+		Path:     "/home/diamond/Pictures/astolfo_ava_n.png",
+		Position: image.Pt(0, 1),
+		Size:     tsixel.CharPt(20, 20), // or 40x20 chars or a square
+	},
+	{
+		Path:     "/home/diamond/Downloads/curry1.png",
+		Position: image.Pt(len(Greetings), 0),
+		Size:     tsixel.CharPt(1, 1), // 2x1 chars
+	},
+	{
+		Path:     "/home/diamond/Downloads/emoji.gif",
+		Position: tsixel.CharPt(20, 1),
+		Size:     tsixel.CharPt(5, 5),
+	},
+}
 
 func main() {
 	sixels := make([]tsixel.Imager, len(images))
 	opts := tsixel.ImageOpts{
 		KeepRatio: true,
 		Dither:    false,
-		Scaler:    draw.ApproxBiLinear,
+		Scaler:    draw.BiLinear,
 	}
 
 	for i, img := range images {
