@@ -1,5 +1,7 @@
 # tcell-sixel
 
+![gif](sixel-demo.gif)
+
 The root repository contains a demo.
 
 1. Edit the file path in `main.go`
