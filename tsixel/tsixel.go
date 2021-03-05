@@ -244,12 +244,27 @@ func (sz ScreenState) PtInPixelsRounded(pt image.Point) image.Point {
 	pt.X *= cell.X
 	pt.Y *= cell.Y
 
-	// Round the image down to the proper SIXEL sizes.
-	excess := pt.Y % SIXELHeight
-	pt.Y -= excess
+	// Whatever.
+	if pt.X == 0 || pt.Y == 0 {
+		return pt
+	}
+
+	// Round the image down to the proper SIXEL heights.
+	excessY := pt.Y % SIXELHeight
 
 	// Account for this loss in the width.
-	pt.X -= (excess * cell.X) / cell.Y
+	pt.X -= excessY * pt.X / pt.Y // floor division
+	pt.Y -= excessY
+
+	// Round the image down to the cell size after we changed the size to no
+	// longer round.
+	if excessY > 0 {
+		excessX := pt.X % cell.X
+
+		// Account for the loss of the loss.
+		pt.X -= excessX
+		pt.Y -= ceilDiv(excessX*pt.Y, pt.X) // ceiling division
+	}
 
 	return pt
 }

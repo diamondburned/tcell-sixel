@@ -4,7 +4,7 @@ go 1.16
 
 // replace with intercept-ifaces branch
 // replace github.com/gdamore/tcell/v2 => ../tcell
-replace github.com/gdamore/tcell/v2 => github.com/diamondburned/tcell/v2 v2.0.0-20210301010819-bb21ae87f80f
+replace github.com/gdamore/tcell/v2 => github.com/diamondburned/tcell/v2 v2.0.0-20210305013452-b383349f05de
 
 require (
 	github.com/disintegration/imaging v1.6.2

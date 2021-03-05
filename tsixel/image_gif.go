@@ -102,20 +102,16 @@ func (anim *Animation) Update(state ScreenState, sync bool, now time.Time) Frame
 
 	anim.updateSize(state, sync)
 
-	rect := anim.imageBounds()
-	rectPx := anim.sstate.RectInPixels(rect)
-	sizePx := rectPx.Size()
-
 	sixelFrame := anim.frames[anim.frameIx]
-	if sixelFrame.sixel == nil || sixelFrame.size != sizePx {
+	if sixelFrame.sixel == nil || sixelFrame.size != anim.imgPixels {
 		// Mark redraw.
 		sync = true
 
 		// Update the size.
-		sixelFrame.size = sizePx
+		sixelFrame.size = anim.imgPixels
 
 		frame := anim.gif.Image[anim.frameIx]
-		resizedImg := image.NewRGBA(image.Rectangle{Max: sizePx})
+		resizedImg := image.NewRGBA(image.Rectangle{Max: anim.imgPixels})
 		anim.opts.Scaler.Scale(resizedImg, resizedImg.Rect, frame, frame.Rect, draw.Over, nil)
 
 		anim.buf.Reset()
@@ -142,7 +138,7 @@ func (anim *Animation) Update(state ScreenState, sync bool, now time.Time) Frame
 	}
 
 	return Frame{
-		Bounds:     rect,
+		Bounds:     anim.imageBounds(),
 		SIXEL:      sixelFrame.sixel,
 		MustUpdate: sync,
 	}

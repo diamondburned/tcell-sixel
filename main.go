@@ -25,18 +25,18 @@ type Image struct {
 	Size     image.Point
 }
 
-var images = []Image{
-	{
+var images = map[string]Image{
+	"Astolfo": {
 		Path:     "/home/diamond/Pictures/astolfo_ava_n.png",
 		Position: image.Pt(0, 1),
 		Size:     tsixel.CharPt(20, 20), // or 40x20 chars or a square
 	},
-	{
+	"Emoji": {
 		Path:     "/home/diamond/Downloads/curry1.png",
 		Position: image.Pt(len(Greetings), 0),
 		Size:     tsixel.CharPt(1, 1), // 2x1 chars
 	},
-	{
+	"GIF": {
 		Path:     "/home/diamond/Downloads/emoji.gif",
 		Position: tsixel.CharPt(20, 1),
 		Size:     tsixel.CharPt(5, 5),
@@ -44,14 +44,14 @@ var images = []Image{
 }
 
 func main() {
-	sixels := make([]tsixel.Imager, len(images))
+	sixels := make(map[string]tsixel.Imager, len(images))
 	opts := tsixel.ImageOpts{
 		KeepRatio: true,
 		Dither:    false,
 		Scaler:    draw.BiLinear,
 	}
 
-	for i, img := range images {
+	for name, img := range images {
 		var sixel tsixel.Imager
 
 		f, err := os.Open(img.Path)
@@ -85,7 +85,7 @@ func main() {
 		}
 
 		f.Close()
-		sixels[i] = sixel
+		sixels[name] = sixel
 	}
 
 	if err := start(sixels); err != nil {
@@ -93,7 +93,7 @@ func main() {
 	}
 }
 
-func start(images []tsixel.Imager) error {
+func start(images map[string]tsixel.Imager) error {
 	screen, err := tcell.NewScreen()
 	if err != nil {
 		return errors.Wrap(err, "failed to create screen")
@@ -122,11 +122,27 @@ func start(images []tsixel.Imager) error {
 		}
 	}()
 
+	gif := images["GIF"].(*tsixel.Animation)
+	ast := images["Astolfo"].(*tsixel.Image)
+
 	for {
 		switch ev := screen.PollEvent().(type) {
+		case *tcell.EventResize:
+			astRect := ast.Bounds()
+			gif.SetPosition(image.Pt(astRect.Max.X, 1))
+
 		case *tcell.EventKey:
+			switch ev.Key() {
 			// Exit on Esc.
-			if ev.Key() == tcell.KeyEscape {
+			case tcell.KeyEscape:
+				return nil
+			case tcell.KeyF5:
+				screen.Sync()
+			}
+
+			switch ev.Rune() {
+			// Exit on Q.
+			case 'q':
 				return nil
 			}
 		}

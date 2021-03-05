@@ -3,7 +3,6 @@ package tsixel
 import (
 	"bytes"
 	"image"
-	"log"
 	"sync"
 	"time"
 
@@ -125,9 +124,6 @@ func (img *imageState) updateSize(state ScreenState, sync bool) (redraw bool) {
 	// Convert cells into pixels so we have more accuracy.
 	newImgRtPx := state.RectInPixels(newImgRect)
 
-	log.Println("newImgRect:", newImgRect)
-	log.Println("newImgRtPx:", newImgRtPx)
-
 	if img.opts.KeepRatio {
 		newImgRtPx.Max = newImgRtPx.Min.Add(maxSize(img.srcSize, newImgRtPx.Size()))
 		newImgRect = state.RectInCells(newImgRtPx)
@@ -218,12 +214,18 @@ func ptOverlapOneSide(p1, p2 image.Point) bool {
 // height. Aspect ratio is preserved.
 func maxSize(size, max image.Point) image.Point {
 	if size.X < size.Y {
-		size.Y = ((size.Y * max.X) + size.X - 1) / size.X // round up
+		size.Y = ceilDiv(size.Y*max.X, size.X)
 		size.X = max.X
 	} else {
-		size.X = ((size.X * max.Y) + size.Y - 1) / size.Y
+		size.X = ceilDiv(size.X*max.Y, size.Y)
 		size.Y = max.Y
 	}
 
 	return size
+}
+
+// ceilDiv performs the division operation such that a is divided by b. The
+// result is rounded up (ceiling) instead of rounded down (floor).
+func ceilDiv(a, b int) int {
+	return (a + b - 1) / b
 }
