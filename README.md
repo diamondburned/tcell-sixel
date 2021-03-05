@@ -2,10 +2,15 @@
 
 ![gif](sixel-demo.gif)
 
-The root repository contains a demo.
+## Usage
 
-1. Edit the file path in `main.go`
-2. `go run .` in a SIXEL-capable terminal
+Documentation: [pkg.go.dev](https://pkg.go.dev/github.com/diamondburned/tcell-sixel)
+
+Import:
+
+```go
+import tsixel "github.com/diamondburned/tcell-sixel"
+```
 
 ## Features
 

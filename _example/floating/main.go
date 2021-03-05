@@ -11,10 +11,11 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 
-	"github.com/diamondburned/tcell-sixel/tsixel"
 	"github.com/gdamore/tcell/v2"
 	"github.com/pkg/errors"
 	"golang.org/x/image/draw"
+
+	tsixel "github.com/diamondburned/tcell-sixel"
 )
 
 var Greetings = []rune("Hello, world! Look at this SIXEL: ")
