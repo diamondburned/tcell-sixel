@@ -3,8 +3,7 @@ module github.com/diamondburned/tcell-sixel
 go 1.16
 
 // replace with intercept-ifaces branch
-// replace github.com/gdamore/tcell/v2 => ../tcell
-replace github.com/gdamore/tcell/v2 => github.com/diamondburned/tcell/v2 v2.0.0-20210305013452-b383349f05de
+replace github.com/gdamore/tcell/v2 => github.com/diamondburned/tcell/v2 v2.0.0-20210305022633-c1df2bdc7b39
 
 require (
 	github.com/disintegration/imaging v1.6.2
