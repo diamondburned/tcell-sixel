@@ -245,12 +245,17 @@ func ptOverlapOneSide(p, bound image.Point) bool {
 // maxSize returns the maximum size that can fit within the given max width and
 // height. Aspect ratio is preserved.
 func maxSize(size, max image.Point) image.Point {
-	if size.X > size.Y {
-		size.Y = ceilDiv(size.Y*max.X, size.X)
+	original := size
+
+	// Code ported from https://stackoverflow.com/a/10245583.
+
+	if original.X > max.X {
 		size.X = max.X
-	} else {
-		size.X = ceilDiv(size.X*max.Y, size.Y)
+		size.Y = original.Y * size.X / original.X
+	}
+	if size.Y > max.Y {
 		size.Y = max.Y
+		size.X = original.X * size.Y / original.Y
 	}
 
 	return size
