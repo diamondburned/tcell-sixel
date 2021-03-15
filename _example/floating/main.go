@@ -11,11 +11,10 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 
+	"github.com/diamondburned/tcell-sixel/tsixel"
 	"github.com/gdamore/tcell/v2"
 	"github.com/pkg/errors"
 	"golang.org/x/image/draw"
-
-	tsixel "github.com/diamondburned/tcell-sixel"
 )
 
 var Greetings = []rune("Hello, world! Look at this SIXEL: ")
@@ -35,12 +34,12 @@ var images = map[string]Image{
 	"Emoji": {
 		Path:     "/home/diamond/Downloads/curry1.png",
 		Position: image.Pt(len(Greetings), 0),
-		Size:     tsixel.CharPt(1, 1), // 2x1 chars
+		Size:     tsixel.CharPt(2, 1),
 	},
 	"GIF": {
 		Path:     "/home/diamond/Downloads/emoji.gif",
 		Position: tsixel.CharPt(20, 1),
-		Size:     tsixel.CharPt(5, 5),
+		Size:     tsixel.CharPt(10, 10),
 	},
 }
 

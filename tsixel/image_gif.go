@@ -1,25 +1,19 @@
 package tsixel
 
 import (
-	"bytes"
 	"image"
 	"image/gif"
 	"time"
-
-	"github.com/mattn/go-sixel"
-	"golang.org/x/image/draw"
 )
 
 type Animation struct {
-	gif *gif.GIF
-	enc *sixel.Encoder
-	buf *bytes.Buffer
-
+	gif      *gif.GIF
 	frames   []animationFrame
 	lastTime time.Time // last drawn time
 
 	imageState
 
+	redraw  bool
 	frameIx int // frame index
 	loopedN int // number of times looped
 }
@@ -30,17 +24,8 @@ type animationFrame struct {
 }
 
 func NewAnimation(gif *gif.GIF, opts ImageOpts) *Animation {
-	buf := bytes.Buffer{}
-	buf.Grow(SIXELBufferSize)
-
-	enc := sixel.NewEncoder(&buf)
-	enc.Dither = opts.Dither
-
 	return &Animation{
-		gif: gif,
-		enc: enc,
-		buf: &buf,
-
+		gif:        gif,
 		frames:     make([]animationFrame, len(gif.Image)),
 		imageState: newImageState(image.Pt(gif.Config.Width, gif.Config.Height), opts),
 	}
@@ -93,53 +78,62 @@ func gifDelayDuration(delay int) time.Duration {
 	return time.Second / 100 * time.Duration(delay)
 }
 
-func (anim *Animation) Update(state ScreenState, sync bool, now time.Time) Frame {
+func (anim *Animation) Update(state DrawState) Frame {
 	anim.l.Lock()
 	defer anim.l.Unlock()
 
 	lastFrame := anim.frameIx
-	anim.seekFrames(now)
+	anim.seekFrames(state.Time)
 
-	anim.updateSize(state, sync)
+	redraw := anim.redraw
+	anim.redraw = false
 
-	sixelFrame := anim.frames[anim.frameIx]
-	if sixelFrame.sixel == nil || sixelFrame.size != anim.imgPixels {
-		// Mark redraw.
-		sync = true
-
-		// Update the size.
-		sixelFrame.size = anim.imgPixels
-
-		frame := anim.gif.Image[anim.frameIx]
-		resizedImg := image.NewRGBA(image.Rectangle{Max: anim.imgPixels})
-		anim.opts.Scaler.Scale(resizedImg, resizedImg.Rect, frame, frame.Rect, draw.Over, nil)
-
-		anim.buf.Reset()
-		anim.enc.Encode(resizedImg)
-
-		// Reallocate a completely new slice if we don't have enough space.
-		// Otherwise, reuse it.
-		if cap(sixelFrame.sixel) < anim.buf.Len() {
-			sixelFrame.sixel = make([]byte, 0, anim.buf.Len())
-		} else {
-			sixelFrame.sixel = sixelFrame.sixel[:0]
-		}
-
-		// Copy the shared buffer so we can reuse it.
-		sixelFrame.sixel = append(sixelFrame.sixel, anim.buf.Bytes()...)
-
-		// Save the frame into the slice.
-		anim.frames[anim.frameIx] = sixelFrame
+	// update redraw state.
+	if !redraw {
+		redraw = lastFrame != anim.frameIx
 	}
 
-	// Ensure that sync is true if the frame is a different one.
-	if !sync && lastFrame != anim.frameIx {
-		sync = true
+	frameSIXEL := &anim.frames[anim.frameIx]
+
+	anim.updateSize(state)
+
+	if frameSIXEL.sixel == nil || frameSIXEL.size != anim.imgPixels {
+		// Mark redraw.
+		redraw = true
+		// Clear out the old SIXEL.
+		frameSIXEL.sixel = nil
+
+		// Update the size directly.
+		frameSIXEL.size = anim.imgPixels
+
+		resizerMain.QueueJob(ResizerJob{
+			SrcImg:  anim.gif.Image[anim.frameIx],
+			Options: anim.opts,
+			NewSize: frameSIXEL.size,
+
+			Done: func(job ResizerJob, out []byte) {
+				anim.l.Lock()
+
+				// Ensure this is the latest geometry.
+				if job.NewSize != frameSIXEL.size {
+					anim.l.Unlock()
+					return
+				}
+
+				// Update the internal SIXEL directly and mark for redrawing.
+				frameSIXEL.sixel = out
+				anim.redraw = true
+
+				anim.l.Unlock()
+
+				state.Delegate()
+			},
+		})
 	}
 
 	return Frame{
 		Bounds:     anim.imageBounds(),
-		SIXEL:      sixelFrame.sixel,
-		MustUpdate: sync,
+		SIXEL:      frameSIXEL.sixel,
+		MustUpdate: redraw,
 	}
 }
