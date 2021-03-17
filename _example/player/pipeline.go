@@ -140,8 +140,12 @@ func pipelineMain(ctx context.Context, wg *sync.WaitGroup, state pipelineState) 
 				return
 			}
 
-			job.done <- framesWritten
-			framesWritten++
+			select {
+			case <-ctx.Done():
+				return
+			case job.done <- framesWritten:
+				framesWritten++
+			}
 
 		case finished := <-state.finished:
 			frames[finished.frame] = finished.sixel
@@ -210,42 +214,17 @@ func pipelineWorker(ctx context.Context, wg *sync.WaitGroup, state workerState) 
 
 	var finished workerFinished
 
-	// Copy these channels so we can pause them.
-	readyCh := state.ready
-	var finishCh chan<- workerFinished
-	var signalCh <-chan int
-
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case state.ready <- ticket:
+			select {
+			case <-ctx.Done():
+				return
+			case finished.frame = <-signal:
 
-		// First:
-		case readyCh <- ticket:
-			// Pause the ready channel and wait for the frame signal.
-			readyCh = nil
-			signalCh = signal
-			continue
-
-		// Second:
-		case finished.frame = <-signalCh:
-			// We've received the signal that we should process what we
-			// received. Pause everything until we're done processing.
-			readyCh = nil
-			signalCh = nil
-
-			// Process the image.
-
-		// Third:
-		case finishCh <- finished:
-			// We're done processing and Depositing the finished task. Pause the
-			// channel to prevent resending the same task twice.
-			finishCh = nil
-			finished.sixel = nil // in case we accidentally use it
-
-			// Resume the ready channel.
-			readyCh = state.ready
-			continue
+			}
 		}
 
 		srcImage := ticket.src
@@ -273,8 +252,13 @@ func pipelineWorker(ctx context.Context, wg *sync.WaitGroup, state workerState) 
 		sixEnc.Encode(paletted)
 
 		finished.sixel = append([]byte(nil), sixBuf.Bytes()...)
-		// Mark the job as available.
-		finishCh = state.finished
+
+		select {
+		case <-ctx.Done():
+			return
+		case state.finished <- finished:
+			finished.sixel = nil
+		}
 	}
 }
 

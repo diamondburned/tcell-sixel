@@ -87,6 +87,13 @@ func main() {
 	}
 	defer o.Close()
 
+	// Start (and kill - LIFO!) the process before halting the pipeline.
+	if err := cmd.Start(); err != nil {
+		log.Fatalln("failed to start cmd:", err)
+	}
+	defer cmd.Wait()
+	defer cmd.Process.Kill()
+
 	errorCh := make(chan error)
 
 	frameCh, cancel := startPipeline(context.TODO(), pipelineProps{
@@ -104,13 +111,6 @@ func main() {
 		errCh:  errorCh,
 	})
 	defer cancel()
-
-	// Start (and kill - LIFO!) the process before halting the pipeline.
-	if err := cmd.Start(); err != nil {
-		log.Fatalln("failed to start cmd:", err)
-	}
-	defer cmd.Wait()
-	defer cmd.Process.Kill()
 
 	screen, err := tcell.NewScreen()
 	if err != nil {
