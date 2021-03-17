@@ -50,6 +50,12 @@ func newImageState(srcSize image.Point, opts ImageOpts) imageState {
 	}
 }
 
+func (img *imageState) setSrcSize(srcSize image.Point) {
+	img.srcSize = srcSize
+	img.imgCells = image.Point{}
+	img.imgPixels = image.Point{}
+}
+
 // SetSize sets the size of the image in units of cells. In other words, it sets
 // the bottom-right corner of the image relatively to the top-left corner of the
 // image. Note that this merely sets a hint; the actual image will never be
@@ -158,6 +164,8 @@ func (img *imageState) updateSize(state DrawState) bool {
 	return true
 }
 
+// TODO: make StaticImage for a fully static no resizing image impl.
+
 // Image represents a SIXEL image. This image holds the source image and resizes
 // it as needed. Each image has its own buffer and its associated encoder. To
 // set its boundaries, use the SetBounds method. Note that the setter methods
@@ -168,11 +176,9 @@ func (img *imageState) updateSize(state DrawState) bool {
 // of an image entirely depends on the screen it is on.
 type Image struct {
 	src image.Image
-	dst image.Image // post-resize
 	buf []byte
 
 	imageState
-	currentSize image.Point
 
 	// use for drawing after async resize
 	updated bool
@@ -192,12 +198,29 @@ func NewImage(img image.Image, opts ImageOpts) *Image {
 	}
 }
 
+// SetImage sets the new image source into the currnet image. The processing is
+// done immediately, so the sizes returned by the methods are guaranteed to be
+// updated.
+func (img *Image) SetImage(newSrc image.Image) {
+	img.l.Lock()
+	defer img.l.Unlock()
+
+	img.src = newSrc
+	img.setSrcSize(newSrc.Bounds().Size())
+	img.update(img.sstate)
+	img.updated = true
+}
+
 // Update updates the image's state to the given screen, resizes the src image,
 // and updates the internal buffer. It implements the Imager interface.
 func (img *Image) Update(state DrawState) Frame {
 	img.l.Lock()
 	defer img.l.Unlock()
 
+	return img.update(state)
+}
+
+func (img *Image) update(state DrawState) Frame {
 	updated := img.updated
 	img.updated = false
 
@@ -219,8 +242,8 @@ func (img *Image) Update(state DrawState) Frame {
 		Done: func(job ResizerJob, out []byte) {
 			img.l.Lock()
 
-			// Ensure this is the latest geometry.
-			if job.NewSize != img.imgPixels {
+			// Ensure this is the latest image and geometry.
+			if job.SrcImg != img.src || job.NewSize != img.imgPixels {
 				img.l.Unlock()
 				return
 			}

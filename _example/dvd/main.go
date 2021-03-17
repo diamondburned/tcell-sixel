@@ -52,7 +52,7 @@ func main() {
 	sixSize := tsixel.CharPt(imageWidth, imageHeight)
 
 	siximg := sixels.AddAnyImage(img, tsixel.ImageOpts{
-		Scaler:     draw.ApproxBiLinear,
+		Scaler:     draw.CatmullRom,
 		KeepRatio:  true,
 		NoRounding: true,
 	})

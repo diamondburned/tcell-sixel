@@ -158,7 +158,6 @@ func (s *Screen) beforeDraw(screen tcell.Screen, sync bool) bool {
 				}
 			})
 		}
-
 	}
 
 	return clear
@@ -169,7 +168,7 @@ func (s *Screen) afterDraw(screen tcell.Screen, sync bool) bool {
 	drawer, _ := screen.(tcell.DirectDrawer)
 
 	for _, img := range s.images {
-		if img.frame.MustUpdate {
+		if img.frame.MustUpdate || sync {
 			screen.ShowCursor(img.frame.Bounds.Min.X, img.frame.Bounds.Min.Y)
 			drawer.DrawDirectly(img.frame.SIXEL)
 		}
@@ -269,9 +268,31 @@ func (sz DrawState) PtInPixels(pt image.Point) image.Point {
 	return pt
 }
 
-// RoundPt rounds a pixel point to be within SIXEL multiples.
+// PtInCells converts a point which unit is in pixels to cells. The cells are
+// rounded up (ceiling). If DrawState's cell size is a zero-value, then a zero
+// point is returned.
+func (sz DrawState) PtInCells(pt image.Point) image.Point {
+	return ptInCells(sz.CellSize(), pt)
+}
+
+func ptInCells(cell image.Point, pt image.Point) image.Point {
+	if cell.X == 0 || cell.Y == 0 {
+		return image.Point{}
+	}
+
+	pt.X = ceilDiv(pt.X, cell.X)
+	pt.Y = ceilDiv(pt.Y, cell.Y)
+
+	return pt
+}
+
+// RoundPt rounds a pixel point to be within SIXEL multiples. If DrawState's
+// cell size is a zero-value, then a zero point is returned.
 func (sz DrawState) RoundPt(pt image.Point) image.Point {
 	cell := sz.CellSize()
+	if cell.X == 0 || cell.Y == 0 {
+		return image.Point{}
+	}
 
 	// Round the image down to the proper SIXEL heights.
 	excessY := pt.Y % SIXELHeight
@@ -318,13 +339,8 @@ func (sz DrawState) RectInPixels(rect image.Rectangle, round bool) image.Rectang
 
 // RectInCells converts a rectangle which unit is in pixels into one in cells.
 func (sz DrawState) RectInCells(rect image.Rectangle) image.Rectangle {
-	cell := sz.CellSize()
-
-	rect.Min.X /= cell.X
-	rect.Min.Y /= cell.Y
-
-	rect.Max.X /= cell.X
-	rect.Max.Y /= cell.Y
+	rect.Min = sz.PtInCells(rect.Min)
+	rect.Max = sz.PtInCells(rect.Max)
 
 	return rect
 }

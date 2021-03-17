@@ -208,31 +208,7 @@ EventLoop:
 			return
 
 		case job := <-w.distrib:
-			dstImg := image.NewRGBA(image.Rectangle{Max: job.NewSize})
-
-			// Clip the new image if we don't scale. Otherwise, scale the image
-			// onto the new one as usual.
-			if job.Options.Scaler == nil {
-				draw.Draw(
-					dstImg, dstImg.Bounds(),
-					job.SrcImg, image.Pt(0, 0), draw.Over,
-				)
-			} else {
-				job.Options.Scaler.Scale(
-					dstImg, dstImg.Bounds(),
-					job.SrcImg, job.SrcImg.Bounds(), draw.Over, nil,
-				)
-			}
-
-			enc := w.pool.take()
-
-			enc.Dither = job.Options.Dither
-			enc.Encode(dstImg)
-
-			bytes := enc.Bytes()
-
-			w.pool.put(enc)
-
+			bytes := w.pool.do(job.SrcImg, job.NewSize, job.Options)
 			job.Done(*job, bytes)
 
 		default:
@@ -249,27 +225,31 @@ EventLoop:
 	return
 }
 
-type encoderPool sync.Pool
-
 type pooledEncoder struct {
 	*sixel.Encoder
 	buf *bytes.Buffer
+}
+
+func newPooledEncoder(cap int) pooledEncoder {
+	buf := bytes.Buffer{}
+	buf.Grow(cap)
+
+	return pooledEncoder{
+		buf:     &buf,
+		Encoder: sixel.NewEncoder(&buf),
+	}
 }
 
 func (enc pooledEncoder) Bytes() []byte {
 	return append([]byte(nil), enc.buf.Bytes()...)
 }
 
+type encoderPool sync.Pool
+
 func newEncoderPool() *encoderPool {
 	return (*encoderPool)(&sync.Pool{
 		New: func() interface{} {
-			buf := bytes.Buffer{}
-			buf.Grow(50 * 1024) // 50KB
-
-			return pooledEncoder{
-				buf:     &buf,
-				Encoder: sixel.NewEncoder(&buf),
-			}
+			return newPooledEncoder(50 * 1024) // 50KB
 		},
 	})
 }
@@ -281,4 +261,32 @@ func (encp *encoderPool) take() pooledEncoder {
 func (encp *encoderPool) put(enc pooledEncoder) {
 	enc.buf.Reset()
 	(*sync.Pool)(encp).Put(enc)
+}
+
+func (encp *encoderPool) do(src image.Image, sz image.Point, opts ImageOpts) []byte {
+	// TODO: pool the image's backing array
+	// TODO: use something better than sync.Pool
+	dst := image.NewRGBA(image.Rectangle{Max: sz})
+
+	// Clip the new image if we don't scale. Otherwise, scale the image
+	// onto the new one as usual.
+	if opts.Scaler == nil {
+		draw.Draw(
+			dst, dst.Bounds(),
+			src, image.Pt(0, 0), draw.Over,
+		)
+	} else {
+		opts.Scaler.Scale(
+			dst, dst.Bounds(),
+			src, src.Bounds(), draw.Over, nil,
+		)
+	}
+
+	enc := encp.take()
+	defer encp.put(enc)
+
+	enc.Encoder.Dither = opts.Dither
+	enc.Encoder.Encode(dst)
+
+	return enc.Bytes()
 }
