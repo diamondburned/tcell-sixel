@@ -43,8 +43,6 @@ type workerState struct {
 	finished chan<- workerFinished
 }
 
-type pipelineShared struct{}
-
 // pipelineReady is sent from a worker through the job channel to the main
 // pipeline to signal that it is ready to process more work.
 type pipelineReady struct {
