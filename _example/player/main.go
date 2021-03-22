@@ -131,21 +131,37 @@ func main() {
 	sixels.AddImage(dummy)
 
 	eventCh := screenEventPipeline(screen)
+	onEvent := func(ev tcell.Event) bool {
+		switch ev := ev.(type) {
+		case *tcell.EventKey:
+			if ev.Key() == tcell.KeyEscape || ev.Rune() == 'q' {
+				return true
+			}
+			if ev.Key() == tcell.KeyF5 {
+				screen.Sync()
+			}
+
+		case *tcell.EventResize:
+			screen.Show()
+		}
+
+		return false
+	}
 
 	for {
+		// Process events first.
 		select {
 		case ev := <-eventCh:
-			switch ev := ev.(type) {
-			case *tcell.EventKey:
-				if ev.Key() == tcell.KeyEscape || ev.Rune() == 'q' {
-					return
-				}
-				if ev.Key() == tcell.KeyF5 {
-					screen.Sync()
-				}
+			if onEvent(ev) {
+				return
+			}
+		default:
+		}
 
-			case *tcell.EventResize:
-				screen.Show()
+		select {
+		case ev := <-eventCh:
+			if onEvent(ev) {
+				return
 			}
 
 		case frame := <-frameCh:
@@ -166,7 +182,7 @@ func main() {
 // screenEventPipeline starts a new event pipeline. The returned channel is
 // closed once PollEvent returns a nil event.
 func screenEventPipeline(screen tcell.Screen) <-chan tcell.Event {
-	ch := make(chan tcell.Event)
+	ch := make(chan tcell.Event, 1)
 
 	go func() {
 		for {

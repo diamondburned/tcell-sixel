@@ -38,12 +38,15 @@ func (dummy *dummyImage) Update(state tsixel.DrawState) tsixel.Frame {
 	dummy.l.Lock()
 	defer dummy.l.Unlock()
 
+	update := dummy.update
+	dummy.update = false
+
 	return tsixel.Frame{
 		SIXEL: dummy.sixel,
 		Bounds: image.Rectangle{
 			Min: image.Pt(0, 0),
-			Max: dummy.p,
+			Max: state.PtInCells(dummy.p),
 		},
-		MustUpdate: dummy.update,
+		MustUpdate: update,
 	}
 }
